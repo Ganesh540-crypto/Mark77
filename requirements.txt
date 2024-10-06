@@ -14,3 +14,4 @@ gunicorn==20.1.0
 matplotlib==3.7.2
 zxcvbn==4.4.28
 numpy<2.0.0
+pandas==2.1.4
