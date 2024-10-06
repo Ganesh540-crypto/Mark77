@@ -4,6 +4,13 @@ from database import db, User, TimeTable, Attendance, Notification, CorrectionRe
 from auth import token_required
 import csv
 from io import StringIO
+from sqlalchemy import func
+from datetime import datetime, timedelta
+import pandas as pd
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+import io
 
 faculty_ns = Namespace('faculty', description='Faculty operations')
 
@@ -67,23 +74,35 @@ class AttendanceStatistics(Resource):
 class StudentAnalytics(Resource):
     @token_required
     def get(self, current_user):
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 10, type=int)
-        sort_by = request.args.get('sort_by', 'attendance_percentage')
-        order = request.args.get('order', 'desc')
-
         try:
+            page = request.args.get('page', 1, type=int)
+            per_page = request.args.get('per_page', 10, type=int)
+            sort_by = request.args.get('sort_by', 'attendance_percentage')
+            order = request.args.get('order', 'desc')
+            search = request.args.get('search', '')
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+
             query = db.session.query(
                 User.user_id,
                 User.name,
-                db.func.count(Attendance.id).label('total_classes'),
-                db.func.sum(db.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
-            ).outerjoin(Attendance
-            ).filter(User.role == 'student'
-            ).group_by(User.user_id)
+                func.count(Attendance.id).label('total_classes'),
+                func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+            ).outerjoin(Attendance, User.user_id == Attendance.user_id
+            ).filter(User.role == 'student')
+
+            if search:
+                query = query.filter(User.name.ilike(f'%{search}%'))
+
+            if start_date:
+                query = query.filter(Attendance.check_in_time >= start_date)
+            if end_date:
+                query = query.filter(Attendance.check_in_time <= end_date)
+
+            query = query.group_by(User.user_id)
 
             if sort_by == 'attendance_percentage':
-                order_column = db.func.cast(db.func.sum(db.case([(Attendance.status == 'present', 1)], else_=0)), db.Float) / db.func.cast(db.func.count(Attendance.id), db.Float)
+                order_column = func.cast(func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)), db.Float) / func.cast(func.count(Attendance.id), db.Float)
             elif sort_by == 'name':
                 order_column = User.name
             else:
@@ -124,14 +143,51 @@ class OverallAnalytics(Resource):
     @token_required
     def get(self, current_user):
         try:
-            analytics = {
-                'total_students': db.session.query(User).filter(User.role == 'student').count(),
-                'total_classes': db.session.query(Attendance).filter(Attendance.user_id.in_(db.session.query(User.user_id).filter(User.role == 'student'))).count(),
-                'total_attendances': db.session.query(Attendance).filter(Attendance.user_id.in_(db.session.query(User.user_id).filter(User.role == 'student'))).filter(Attendance.status == 'present').count(),
-                'average_attendance': round(db.session.query(Attendance).filter(Attendance.user_id.in_(db.session.query(User.user_id).filter(User.role == 'student'))).filter(Attendance.status == 'present').count() / db.session.query(User).filter(User.role == 'student').count(), 2)
-            }
-            
-            return {'status': 'success', 'data': analytics}, 200
+            # Overall statistics
+            total_students = db.session.query(func.count(User.user_id)).filter(User.role == 'student').scalar()
+            total_classes = db.session.query(func.count(Attendance.id)).scalar()
+            total_present = db.session.query(func.count(Attendance.id)).filter(Attendance.status == 'present').scalar()
+            average_attendance = (total_present / total_classes * 100) if total_classes > 0 else 0
+
+            # Attendance trend over last 30 days
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=30)
+            daily_attendance = db.session.query(
+                func.date(Attendance.check_in_time).label('date'),
+                func.count(Attendance.id).label('total'),
+                func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)).label('present')
+            ).filter(Attendance.check_in_time.between(start_date, end_date)
+            ).group_by(func.date(Attendance.check_in_time)).all()
+
+            attendance_trend = [{
+                'date': day.date.strftime('%Y-%m-%d'),
+                'attendance_rate': (day.present / day.total * 100) if day.total > 0 else 0
+            } for day in daily_attendance]
+
+            # Distribution of attendance zones
+            zone_distribution = db.session.query(
+                func.case([
+                    (func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)) * 100 / func.count(Attendance.id) >= 75, 'green'),
+                    (func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)) * 100 / func.count(Attendance.id) >= 65, 'yellow')
+                ], else_='red').label('zone'),
+                func.count(User.user_id).label('count')
+            ).join(Attendance, User.user_id == Attendance.user_id
+            ).filter(User.role == 'student'
+            ).group_by(User.user_id
+            ).group_by('zone').all()
+
+            zone_data = {zone.zone: zone.count for zone in zone_distribution}
+
+            return {
+                'status': 'success',
+                'data': {
+                    'total_students': total_students,
+                    'total_classes': total_classes,
+                    'average_attendance': round(average_attendance, 2),
+                    'attendance_trend': attendance_trend,
+                    'zone_distribution': zone_data
+                }
+            }, 200
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
 
@@ -249,23 +305,67 @@ class ExportAttendance(Resource):
     @token_required
     def get(self, current_user):
         try:
-            percentage = request.args.get('percentage', type=float)
-            
-            if percentage:
-                students = db.session.query(User, Attendance).join(Attendance, User.user_id == Attendance.user_id).filter(User.role == 'student').group_by(User.user_id).having((Attendance.attended_classes / Attendance.total_classes * 100) <= percentage).all()
-            else:
-                students = db.session.query(User, Attendance).join(Attendance, User.user_id == Attendance.user_id).filter(User.role == 'student').group_by(User.user_id).all()
-            
-            output = StringIO()
-            writer = csv.writer(output)
-            writer.writerow(['User ID', 'Name', 'Total Classes', 'Attended Classes', 'Attendance Percentage'])
-            
-            for s in students:
-                attendance_percentage = round((s[1].attended_classes / s[1].total_classes * 100), 2) if s[1].total_classes > 0 else 0
-                writer.writerow([s[0].user_id, s[0].name, s[1].total_classes, s[1].attended_classes, attendance_percentage])
-            
-            output.seek(0)
-            return send_file(output, mimetype='text/csv', as_attachment=True, attachment_filename='attendance_report.csv')
+            export_format = request.args.get('format', 'csv')
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+
+            query = db.session.query(
+                User.user_id,
+                User.name,
+                func.count(Attendance.id).label('total_classes'),
+                func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+            ).join(Attendance, User.user_id == Attendance.user_id
+            ).filter(User.role == 'student')
+
+            if start_date:
+                query = query.filter(Attendance.check_in_time >= start_date)
+            if end_date:
+                query = query.filter(Attendance.check_in_time <= end_date)
+
+            query = query.group_by(User.user_id)
+            results = query.all()
+
+            data = [{
+                'User ID': result.user_id,
+                'Name': result.name,
+                'Total Classes': result.total_classes,
+                'Attended Classes': result.attended_classes,
+                'Attendance Percentage': round((result.attended_classes / result.total_classes * 100), 2) if result.total_classes > 0 else 0
+            } for result in results]
+
+            if export_format == 'csv':
+                output = StringIO()
+                writer = csv.DictWriter(output, fieldnames=data[0].keys())
+                writer.writeheader()
+                writer.writerows(data)
+                output.seek(0)
+                return send_file(output, mimetype='text/csv', as_attachment=True, attachment_filename='attendance_report.csv')
+
+            elif export_format == 'pdf':
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=letter)
+                elements = []
+
+                table_data = [list(data[0].keys())] + [list(row.values()) for row in data]
+                t = Table(table_data)
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 14),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica')
+                ]))
+                elements.append(t)
+                doc.build(elements)
+
+                buffer.seek(0)
+                return send_file(buffer, mimetype='application/pdf', as_attachment=True, attachment_filename='attendance_report.pdf')
+
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
 
@@ -314,6 +414,46 @@ class FacultyNotifications(Resource):
 
             return {'status': 'success', 'message': 'Notification marked as read'}, 200
 
+        except Exception as e:
+            db.session.rollback()
+            return {'status': 'error', 'message': str(e)}, 500
+
+@faculty_ns.route('/profile')
+class FacultyProfile(Resource):
+    @token_required
+    def get(self, current_user):
+        try:
+            faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
+            if not faculty:
+                return {'status': 'error', 'message': 'Faculty not found'}, 404
+            
+            return {
+                'status': 'success',
+                'data': {
+                    'user_id': faculty.user_id,
+                    'name': faculty.name,
+                    'email': faculty.email,  # Include email
+                    'department': faculty.department
+                }
+            }, 200
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}, 500
+
+    @token_required
+    def put(self, current_user):
+        try:
+            data = request.get_json()
+            faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
+            if not faculty:
+                return {'status': 'error', 'message': 'Faculty not found'}, 404
+            
+            # Update fields if provided
+            faculty.name = data.get('name', faculty.name)
+            faculty.email = data.get('email', faculty.email)  # Update email
+            faculty.department = data.get('department', faculty.department)
+
+            db.session.commit()
+            return {'status': 'success', 'message': 'Profile updated successfully'}, 200
         except Exception as e:
             db.session.rollback()
             return {'status': 'error', 'message': str(e)}, 500

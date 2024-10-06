@@ -195,7 +195,7 @@ class NotifyUpcomingClasses(Resource):
             
             if classes:
                 user = User.query.filter_by(user_id=current_user).first()
-                msg = Message("Upcoming Classes", recipients=[user.email])
+                msg = Message("Upcoming Classes", recipients=[user.email])  # Use email from User
                 msg.body = f"You have {len(classes)} classes tomorrow:\n" + \
                            "\n".join([f"{c.period} at {c.start_time} in {c.block_name}" for c in classes])
                 Mail(current_app).send(msg)
@@ -260,5 +260,144 @@ class AttendanceChart(Resource):
             img.seek(0)
             
             return {"status": "success", "chart": base64.b64encode(img.getvalue()).decode()}, 200
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}, 500
+
+@student_ns.route('/profile')
+class StudentProfile(Resource):
+    @token_required
+    def get(self, current_user):
+        try:
+            student = User.query.filter_by(user_id=current_user, role='student').first()
+            if not student:
+                return {'status': 'error', 'message': 'Student not found'}, 404
+            
+            return {
+                'status': 'success',
+                'data': {
+                    'user_id': student.user_id,
+                    'name': student.name,
+                    'email': student.email,  # Include email
+                    'year': student.year,
+                    'branch': student.branch
+                }
+            }, 200
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}, 500
+
+    @token_required
+    def put(self, current_user):
+        try:
+            data = request.get_json()
+            student = User.query.filter_by(user_id=current_user, role='student').first()
+            if not student:
+                return {'status': 'error', 'message': 'Student not found'}, 404
+            
+            # Update fields if provided
+            student.name = data.get('name', student.name)
+            student.email = data.get('email', student.email)  # Update email
+            student.year = data.get('year', student.year)
+            student.branch = data.get('branch', student.branch)
+
+            db.session.commit()
+            return {'status': 'success', 'message': 'Profile updated successfully'}, 200
+        except Exception as e:
+            db.session.rollback()
+            return {'status': 'error', 'message': str(e)}, 500
+
+@student_ns.route('/attendance_analytics')
+class AttendanceAnalytics(Resource):
+    @token_required
+    def get(self, current_user):
+        try:
+            # Get attendance data for the last 30 days
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=30)
+            
+            attendance_data = db.session.query(
+                db.func.date(Attendance.check_in_time).label('date'),
+                db.func.count(Attendance.id).label('total_classes'),
+                db.func.sum(db.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+            ).filter(
+                Attendance.user_id == current_user,
+                Attendance.check_in_time.between(start_date, end_date)
+            ).group_by(db.func.date(Attendance.check_in_time)).all()
+
+            dates = [data.date.strftime('%Y-%m-%d') for data in attendance_data]
+            attendance_rates = [data.attended_classes / data.total_classes * 100 if data.total_classes > 0 else 0 for data in attendance_data]
+
+            # Create a line chart
+            plt.figure(figsize=(12, 6))
+            plt.plot(dates, attendance_rates, marker='o')
+            plt.title('Attendance Rate Over Last 30 Days')
+            plt.xlabel('Date')
+            plt.ylabel('Attendance Rate (%)')
+            plt.ylim(0, 100)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+
+            # Convert plot to base64 encoded string
+            img = io.BytesIO()
+            plt.savefig(img, format='png')
+            img.seek(0)
+            plot_url = base64.b64encode(img.getvalue()).decode()
+
+            # Calculate overall attendance rate
+            overall_attendance_rate = sum(attendance_rates) / len(attendance_rates) if attendance_rates else 0
+
+            return {
+                'status': 'success',
+                'data': {
+                    'overall_attendance_rate': round(overall_attendance_rate, 2),
+                    'daily_attendance_rates': dict(zip(dates, attendance_rates)),
+                    'attendance_chart': plot_url
+                }
+            }, 200
+
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}, 500
+
+@student_ns.route('/search')
+class SearchAttendance(Resource):
+    @token_required
+    def get(self, current_user):
+        try:
+            query = request.args.get('query', '')
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+
+            attendance_query = Attendance.query.filter(Attendance.user_id == current_user)
+
+            if start_date:
+                attendance_query = attendance_query.filter(Attendance.check_in_time >= start_date)
+            if end_date:
+                attendance_query = attendance_query.filter(Attendance.check_in_time <= end_date)
+
+            if query:
+                attendance_query = attendance_query.filter(
+                    db.or_(
+                        Attendance.period.ilike(f'%{query}%'),
+                        Attendance.block_name.ilike(f'%{query}%'),
+                        Attendance.status.ilike(f'%{query}%')
+                    )
+                )
+
+            results = attendance_query.order_by(Attendance.check_in_time.desc()).limit(50).all()
+
+            attendance_data = [{
+                'id': record.id,
+                'date': record.check_in_time.strftime('%Y-%m-%d'),
+                'period': record.period,
+                'block_name': record.block_name,
+                'status': record.status,
+                'check_in_time': record.check_in_time.strftime('%H:%M:%S'),
+                'check_out_time': record.check_out_time.strftime('%H:%M:%S') if record.check_out_time else None
+            } for record in results]
+
+            return {
+                'status': 'success',
+                'data': attendance_data
+            }, 200
+
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500

@@ -1,18 +1,19 @@
+from flask_migrate import Migrate
 from create_app import create_app
-from database import db, init_db
+from database import db
 from shared_routes import shared_ns
 from student_routes import student_ns
 from faculty_routes import faculty_ns
 
 app, api = create_app()
 
+# Add namespaces to the API
 api.add_namespace(shared_ns)
 api.add_namespace(student_ns)
 api.add_namespace(faculty_ns)
 
-# Initialize the database
-with app.app_context():
-    init_db()
+# Set up database migration
+migrate = Migrate(app, db)
 
 if __name__ == '__main__':
     app.run(debug=True)

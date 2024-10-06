@@ -4,8 +4,10 @@ from auth import token_required
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 from datetime import datetime, timedelta, timezone
-from database import db, User
+from database import db, User, UserActivity
 import secrets
+from zxcvbn import zxcvbn
+from create_app import limiter
 
 shared_ns = Namespace('shared', description='Shared operations')
 
@@ -13,11 +15,23 @@ user_model = shared_ns.model('User', {
     'id': fields.String(required=True, description='User ID'),
     'name': fields.String(required=True, description='User name'),
     'role': fields.String(required=True, description='User role'),
+    'email': fields.String(required=True, description='User email'),  # Added email field
     'password': fields.String(required=True, description='User password'),
     'year': fields.String(required=False, description='Student year'),
     'branch': fields.String(required=False, description='Student branch'),
     'department': fields.String(required=False, description='Faculty department')
 })
+
+def is_password_strong(password):
+    result = zxcvbn(password)
+    if result['score'] < 3:
+        return False, result['feedback']['suggestions']
+    return True, []
+
+def log_user_activity(user_id, activity_type, details=None):
+    new_activity = UserActivity(user_id=user_id, activity_type=activity_type, details=details)
+    db.session.add(new_activity)
+    db.session.commit()
 
 @shared_ns.route('/register')
 class Register(Resource):
@@ -28,6 +42,7 @@ class Register(Resource):
             user_id = data.get('id')
             name = data.get('name')
             role = data.get('role', '').lower()
+            email = data.get('email')  # Get email from request
             password = data.get('password')
             year = data.get('year') if role == 'student' else None
             branch = data.get('branch') if role == 'student' else None
@@ -36,12 +51,22 @@ class Register(Resource):
             if role not in ['student', 'faculty']:
                 return {'status': 'error', 'message': 'Role must be student or faculty.'}, 400
 
+            password = data.get('password')
             if not is_password_valid(password):
                 return {'status': 'error', 'message': 'Password does not meet complexity requirements.'}, 400
+
+            is_strong, suggestions = is_password_strong(password)
+            if not is_strong:
+                return {'status': 'error', 'message': 'Password is not strong enough', 'suggestions': suggestions}, 400
+            
             if role == 'student' and not all([year, branch]):
                 return {'status': 'error', 'message': 'Year and branch are required for students.'}, 400
+            
             if role == 'faculty' and not department:
                 return {'status': 'error', 'message': 'Department is required for faculty.'}, 400
+            
+            if User.query.filter_by(email=email).first():  # Check if email already exists
+                return {'status': 'error', 'message': 'Email already registered.'}, 400
 
             hashed_password = generate_password_hash(password)
 
@@ -49,6 +74,7 @@ class Register(Resource):
                 user_id=user_id,
                 name=name,
                 role=role,
+                email=email,  # Store email in the database
                 year=year,
                 branch=branch,
                 department=department,
@@ -58,6 +84,8 @@ class Register(Resource):
             db.session.add(new_user)
             db.session.commit()
 
+            log_user_activity(new_user.user_id, 'register')
+
             return {'status': 'success', 'message': 'User registered successfully.'}, 201
 
         except Exception as e:
@@ -66,6 +94,7 @@ class Register(Resource):
         
 @shared_ns.route('/login')
 class Login(Resource):
+    @limiter.limit("5 per minute")
     def post(self):
         try:
             data = request.get_json()
@@ -83,6 +112,7 @@ class Login(Resource):
                     current_app.config['SECRET_KEY'],
                     algorithm="HS256"
                 )
+                log_user_activity(user.user_id, 'login')
                 return {'status': 'success', 'token': token}, 200
             
             return {'status': 'error', 'message': 'Invalid username or password'}, 401
@@ -167,6 +197,17 @@ class RefreshToken(Resource):
             return {'status': 'success', 'token': new_token}, 200
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
+
+def is_password_strong(password):
+    result = zxcvbn(password)
+    if result['score'] < 3:
+        return False, result['feedback']['suggestions']
+    return True, []
+
+def log_user_activity(user_id, activity_type, details=None):
+    new_activity = UserActivity(user_id=user_id, activity_type=activity_type, details=details)
+    db.session.add(new_activity)
+    db.session.commit()
 
 def is_password_valid(password):
     # Check if password is at least 8 characters long

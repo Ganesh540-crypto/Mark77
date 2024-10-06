@@ -1,24 +1,34 @@
-from flask import Flask
-from flask_restx import Api
-from database import db
-from flask_cors import CORS
 import os
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+from flask_restx import Api
+from database import db, init_db
+from flask_cors import CORS
 import logging
 from logging.handlers import RotatingFileHandler
+from flask_mail import Mail
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from configuration import Config
+from werkzeug.exceptions import HTTPException
+
+limiter = Limiter(key_func=get_remote_address)
+
+migrate = Migrate()
 
 def create_app():
     app = Flask(__name__)
     
-    # Set the database URI
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///college_attendance.db'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-    app.config['SECRET_KEY'] = 'your_secret_key_here'  # Replace with a real secret key
+    app.config.from_object(Config)
     
-    db.init_app(app)
+    # Initialize the database
+    init_db(app)
+    
+    migrate.init_app(app, db)
     CORS(app)
-
-    api = Api(app, version='1.0', title='College Attendance API',
-              description='A simple college attendance API')
+    Mail(app)
+    limiter.init_app(app)
 
     # Set up logging
     if not app.debug:
@@ -29,9 +39,26 @@ def create_app():
             '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
         file_handler.setLevel(logging.INFO)
         app.logger.addHandler(file_handler)
+        
+        # Also log to console
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        app.logger.addHandler(console_handler)
+
         app.logger.setLevel(logging.INFO)
         app.logger.info('College Attendance startup')
 
-    return app, api
+    api = Api(app, version='1.0', title='College Attendance API',
+              description='A simple college attendance API')
+    
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        # Pass through HTTP errors
+        if isinstance(e, HTTPException):
+            return e
 
-app, api = create_app()
+        # Now you're handling non-HTTP exceptions only
+        app.logger.error(f"An error occurred: {str(e)}")
+        return {"error": str(e)}, 500
+
+    return app, api
