@@ -1,5 +1,5 @@
 from flask import request, jsonify, send_file
-from flask_restx import Namespace, Resource
+from flask_restx import Namespace, Resource, fields
 from database import db, User, TimeTable, Attendance, Notification, CorrectionRequest
 from auth import token_required
 import csv
@@ -14,10 +14,32 @@ import io
 
 faculty_ns = Namespace('faculty', description='Faculty operations')
 
+# Define the models for request bodies
+timetable_model = faculty_ns.model('Timetable', {
+    'timetable_user_id': fields.String(required=True, description='User ID of the student for whom the timetable is being entered'),
+    'day': fields.String(required=True, description='Day of the week'),
+    'period': fields.String(required=True, description='Period name'),
+    'start_time': fields.String(required=True, description='Start time of the class'),
+    'end_time': fields.String(required=True, description='End time of the class'),
+    'block_name': fields.String(required=True, description='Block name'),
+    'wifi_name': fields.String(required=True, description='Wi-Fi name')
+})
+
+update_attendance_model = faculty_ns.model('UpdateAttendance', {
+    'attendance_id': fields.String(required=True, description='Attendance ID to update'),
+    'new_status': fields.String(required=True, description='New status for attendance (present, absent, late)')
+})
+
+notification_model = faculty_ns.model('Notification', {
+    'notification_id': fields.String(required=True, description='Notification ID to mark as read')
+})
+
 @faculty_ns.route('/enter_timetable')
 class EnterTimetable(Resource):
+    @faculty_ns.expect(timetable_model)  # Expecting the timetable model
     @token_required
     def post(self, current_user):
+        """Enters a new timetable for a student."""
         try:
             data = request.get_json()
             timetable_user_id = data.get('timetable_user_id')
@@ -74,6 +96,7 @@ class AttendanceStatistics(Resource):
 class StudentAnalytics(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves analytics for students."""
         try:
             page = request.args.get('page', 1, type=int)
             per_page = request.args.get('per_page', 10, type=int)
@@ -193,8 +216,10 @@ class OverallAnalytics(Resource):
 
 @faculty_ns.route('/update_attendance')
 class UpdateAttendance(Resource):
+    @faculty_ns.expect(update_attendance_model)  # Expecting the update attendance model
     @token_required
     def post(self, current_user):
+        """Updates the attendance status for a specific record."""
         try:
             data = request.get_json()
             attendance_id = data.get('attendance_id')
@@ -218,6 +243,7 @@ class UpdateAttendance(Resource):
 class PendingRequests(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves pending correction requests."""
         try:
             faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
             if not faculty:
@@ -272,6 +298,7 @@ class StudentsByAttendance(Resource):
 class DetainedStudents(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves a list of detained students based on attendance."""
         try:
             print("Executing detained students query")  # Debug print
             detained_students = db.session.query(
@@ -304,6 +331,7 @@ class DetainedStudents(Resource):
 class ExportAttendance(Resource):
     @token_required
     def get(self, current_user):
+        """Exports attendance data in CSV or PDF format."""
         try:
             export_format = request.args.get('format', 'csv')
             start_date = request.args.get('start_date')
@@ -373,6 +401,7 @@ class ExportAttendance(Resource):
 class FacultyNotifications(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves unread notifications for the faculty."""
         try:
             faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
             if not faculty:
@@ -392,8 +421,10 @@ class FacultyNotifications(Resource):
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
 
+    @faculty_ns.expect(notification_model)  # Expecting the notification model
     @token_required
     def post(self, current_user):
+        """Marks a notification as read."""
         try:
             faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
             if not faculty:
@@ -422,6 +453,7 @@ class FacultyNotifications(Resource):
 class FacultyProfile(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves the faculty's profile information."""
         try:
             faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
             if not faculty:
@@ -441,6 +473,7 @@ class FacultyProfile(Resource):
 
     @token_required
     def put(self, current_user):
+        """Updates the faculty's profile information."""
         try:
             data = request.get_json()
             faculty = User.query.filter_by(user_id=current_user, role='faculty').first()

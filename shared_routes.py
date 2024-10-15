@@ -11,38 +11,49 @@ from create_app import limiter
 
 shared_ns = Namespace('shared', description='Shared operations')
 
+# Define the user model for registration
 user_model = shared_ns.model('User', {
     'id': fields.String(required=True, description='User ID'),
     'name': fields.String(required=True, description='User name'),
-    'role': fields.String(required=True, description='User role'),
-    'email': fields.String(required=True, description='User email'),  # Added email field
+    'role': fields.String(required=True, description='User role (student or faculty)'),
+    'email': fields.String(required=True, description='User email'),
     'password': fields.String(required=True, description='User password'),
-    'year': fields.String(required=False, description='Student year'),
-    'branch': fields.String(required=False, description='Student branch'),
-    'department': fields.String(required=False, description='Faculty department')
+    'year': fields.String(required=False, description='Student year (required if role is student)'),
+    'branch': fields.String(required=False, description='Student branch (required if role is student)'),
+    'department': fields.String(required=False, description='Faculty department (required if role is faculty)')
 })
 
-def is_password_strong(password):
-    result = zxcvbn(password)
-    if result['score'] < 3:
-        return False, result['feedback']['suggestions']
-    return True, []
+# Define the login model
+login_model = shared_ns.model('Login', {
+    'username': fields.String(required=True, description='User ID or email'),
+    'password': fields.String(required=True, description='User password')
+})
 
-def log_user_activity(user_id, activity_type, details=None):
-    new_activity = UserActivity(user_id=user_id, activity_type=activity_type, details=details)
-    db.session.add(new_activity)
-    db.session.commit()
+# Define the forgot password model
+forgot_password_model = shared_ns.model('ForgotPassword', {
+    'user_id': fields.String(required=True, description='User ID for password reset')
+})
+
+# Define the reset password model
+reset_password_model = shared_ns.model('ResetPassword', {
+    'user_id': fields.String(required=True, description='User ID'),
+    'reset_token': fields.String(required=True, description='Password reset token'),
+    'new_password': fields.String(required=True, description='New password for the user')
+})
 
 @shared_ns.route('/register')
 class Register(Resource):
     @shared_ns.expect(user_model)
+    @shared_ns.response(201, 'User registered successfully.')
+    @shared_ns.response(400, 'Error in registration.')
     def post(self):
+        """Registers a new user (student or faculty)."""
         try:
             data = request.get_json()
             user_id = data.get('id')
             name = data.get('name')
             role = data.get('role', '').lower()
-            email = data.get('email')  # Get email from request
+            email = data.get('email')
             password = data.get('password')
             year = data.get('year') if role == 'student' else None
             branch = data.get('branch') if role == 'student' else None
@@ -51,7 +62,6 @@ class Register(Resource):
             if role not in ['student', 'faculty']:
                 return {'status': 'error', 'message': 'Role must be student or faculty.'}, 400
 
-            password = data.get('password')
             if not is_password_valid(password):
                 return {'status': 'error', 'message': 'Password does not meet complexity requirements.'}, 400
 
@@ -65,7 +75,7 @@ class Register(Resource):
             if role == 'faculty' and not department:
                 return {'status': 'error', 'message': 'Department is required for faculty.'}, 400
             
-            if User.query.filter_by(email=email).first():  # Check if email already exists
+            if User.query.filter_by(email=email).first():
                 return {'status': 'error', 'message': 'Email already registered.'}, 400
 
             hashed_password = generate_password_hash(password)
@@ -74,7 +84,7 @@ class Register(Resource):
                 user_id=user_id,
                 name=name,
                 role=role,
-                email=email,  # Store email in the database
+                email=email,
                 year=year,
                 branch=branch,
                 department=department,
@@ -91,11 +101,14 @@ class Register(Resource):
         except Exception as e:
             db.session.rollback()
             return {'status': 'error', 'message': str(e)}, 500
-        
+
 @shared_ns.route('/login')
 class Login(Resource):
-    @limiter.limit("5 per minute")
+    @shared_ns.expect(login_model)
+    @shared_ns.response(200, 'Login successful.')
+    @shared_ns.response(401, 'Invalid username or password.')
     def post(self):
+        """Authenticates a user and returns a JWT token."""
         try:
             data = request.get_json()
             username = data.get('username')
@@ -118,10 +131,14 @@ class Login(Resource):
             return {'status': 'error', 'message': 'Invalid username or password'}, 401
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
-    
+
 @shared_ns.route('/forgot_password')
 class ForgotPassword(Resource):
+    @shared_ns.expect(forgot_password_model)  # Expecting the forgot password model
+    @shared_ns.response(200, 'Password reset token generated successfully.')
+    @shared_ns.response(404, 'User not found.')
     def post(self):
+        """Generates a password reset token for the user."""
         try:
             data = request.get_json()
             user_id = data.get('user_id')
@@ -134,21 +151,17 @@ class ForgotPassword(Resource):
             if not user:
                 return {'status': 'error', 'message': 'User not found.'}, 404
 
-            # Generate a reset token
             reset_token = secrets.token_urlsafe(32)
             reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
 
-            # Store the reset token and its expiry in the database
             user.reset_token = reset_token
             user.reset_token_expiry = reset_token_expiry
             db.session.commit()
 
-            # In a real application, you would send this token via email
-            # For this example, we'll return it in the response
             return {
                 'status': 'success', 
                 'message': 'Password reset token generated successfully.',
-                'reset_token': reset_token  # In practice, send this via email instead
+                'reset_token': reset_token
             }, 200
 
         except Exception as e:
@@ -157,7 +170,11 @@ class ForgotPassword(Resource):
 
 @shared_ns.route('/reset_password')
 class ResetPassword(Resource):
+    @shared_ns.expect(reset_password_model)  # Expecting the reset password model
+    @shared_ns.response(200, 'Password reset successfully.')
+    @shared_ns.response(400, 'All fields are required.')
     def post(self):
+        """Resets the user's password using the reset token."""
         try:
             data = request.get_json()
             user_id = data.get('user_id')
@@ -172,7 +189,6 @@ class ResetPassword(Resource):
             if not user or user.reset_token_expiry < datetime.utcnow():
                 return {'status': 'error', 'message': 'Invalid or expired reset token.'}, 400
 
-            # Hash the new password and update the user's record
             user.password_hash = generate_password_hash(new_password)
             user.reset_token = None
             user.reset_token_expiry = None
@@ -188,6 +204,7 @@ class ResetPassword(Resource):
 class RefreshToken(Resource):
     @token_required
     def post(self, current_user):
+        """Refreshes the JWT token for the authenticated user."""
         try:
             new_token = jwt.encode(
                 {'user_id': current_user, 'exp': datetime.now(timezone.utc) + timedelta(hours=24)},
@@ -210,16 +227,12 @@ def log_user_activity(user_id, activity_type, details=None):
     db.session.commit()
 
 def is_password_valid(password):
-    # Check if password is at least 8 characters long
     if len(password) < 8:
         return False
-    # Check if password contains at least one uppercase letter
     if not any(char.isupper() for char in password):
         return False
-    # Check if password contains at least one lowercase letter
     if not any(char.islower() for char in password):
         return False
-    # Check if password contains at least one digit
     if not any(char.isdigit() for char in password):
         return False
     return True

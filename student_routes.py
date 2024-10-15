@@ -1,4 +1,4 @@
-from flask_restx import Namespace, Resource
+from flask_restx import Namespace, Resource, fields
 from flask import request, current_app
 from datetime import datetime, timedelta
 from database import db, Attendance, TimeTable, User, Notification, CorrectionRequest
@@ -10,10 +10,27 @@ import base64
 
 student_ns = Namespace('student', description='Student operations')
 
+# Define the models for request bodies
+attendance_model = student_ns.model('Attendance', {
+    'wifi_name': fields.String(required=True, description='Wi-Fi name'),
+    'block_name': fields.String(required=True, description='Block name')
+})
+
+checkout_model = student_ns.model('Checkout', {
+    'attendance_id': fields.String(required=True, description='Attendance ID for checkout')
+})
+
+correction_request_model = student_ns.model('CorrectionRequest', {
+    'attendance_id': fields.String(required=True, description='Attendance ID'),
+    'reason': fields.String(required=True, description='Reason for correction request')
+})
+
 @student_ns.route('/mark_attendance')
 class MarkAttendance(Resource):
+    @student_ns.expect(attendance_model)  # Expecting the attendance model
     @token_required
     def post(self, current_user):
+        """Marks attendance for the student."""
         try:
             data = request.get_json()
             wifi_name = data.get('wifi_name')
@@ -65,8 +82,10 @@ class MarkAttendance(Resource):
 
 @student_ns.route('/checkout')
 class Checkout(Resource):
+    @student_ns.expect(checkout_model)  # Expecting the checkout model
     @token_required
     def post(self, current_user):
+        """Checks out the student from the current attendance record."""
         try:
             attendance_record = Attendance.query.filter_by(
                 user_id=current_user, 
@@ -94,6 +113,7 @@ class Checkout(Resource):
 class AttendanceReport(Resource):
     @token_required
     def get(self, current_user):
+        """Generates an attendance report for the student."""
         try:
             total_periods = Attendance.query.filter_by(user_id=current_user).count()
             attended_periods = Attendance.query.filter_by(user_id=current_user, status='present').count()
@@ -126,6 +146,7 @@ class AttendanceReport(Resource):
 class ViewTimetable(Resource):
     @token_required
     def get(self, current_user):
+        """Views the student's timetable."""
         try:
             timetable = TimeTable.query.filter_by(user_id=current_user).order_by(
                 db.case(
@@ -155,6 +176,7 @@ class ViewTimetable(Resource):
 class AttendanceHistory(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves the attendance history for the student."""
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
         
@@ -189,6 +211,7 @@ class AttendanceHistory(Resource):
 class NotifyUpcomingClasses(Resource):
     @token_required
     def get(self, current_user):
+        """Notifies the student of upcoming classes."""
         try:
             tomorrow = (datetime.now() + timedelta(days=1)).strftime('%A').lower()
             classes = TimeTable.query.filter_by(user_id=current_user, day=tomorrow).order_by(TimeTable.start_time).all()
@@ -208,8 +231,10 @@ class NotifyUpcomingClasses(Resource):
 
 @student_ns.route('/request_correction')
 class RequestCorrection(Resource):
+    @student_ns.expect(correction_request_model)  # Expecting the correction request model
     @token_required
     def post(self, current_user):
+        """Submits a correction request for attendance."""
         try:
             data = request.get_json()
             attendance_id = data.get('attendance_id')
@@ -236,6 +261,7 @@ class RequestCorrection(Resource):
 class AttendanceChart(Resource):
     @token_required
     def get(self, current_user):
+        """Generates an attendance chart for the student."""
         try:
             data = db.session.query(
                 db.func.strftime('%W', Attendance.check_in_time).label('week'),
@@ -267,6 +293,7 @@ class AttendanceChart(Resource):
 class StudentProfile(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves the student's profile information."""
         try:
             student = User.query.filter_by(user_id=current_user, role='student').first()
             if not student:
@@ -287,6 +314,7 @@ class StudentProfile(Resource):
 
     @token_required
     def put(self, current_user):
+        """Updates the student's profile information."""
         try:
             data = request.get_json()
             student = User.query.filter_by(user_id=current_user, role='student').first()
@@ -309,6 +337,7 @@ class StudentProfile(Resource):
 class AttendanceAnalytics(Resource):
     @token_required
     def get(self, current_user):
+        """Retrieves attendance analytics for the last 30 days."""
         try:
             # Get attendance data for the last 30 days
             end_date = datetime.now()
@@ -361,6 +390,7 @@ class AttendanceAnalytics(Resource):
 class SearchAttendance(Resource):
     @token_required
     def get(self, current_user):
+        """Searches attendance records based on query parameters."""
         try:
             query = request.args.get('query', '')
             start_date = request.args.get('start_date')
