@@ -107,6 +107,8 @@ class Register(Resource):
             db.session.rollback()
             current_app.logger.error(f"Error during registration: {str(e)}")
             return {'status': 'error', 'message': 'An unexpected error occurred.'}, 500@shared_ns.route('/login')
+        
+@shared_ns.route('/login')
 class Login(Resource):
     @shared_ns.expect(login_model)
     @shared_ns.response(200, 'Login successful.')
