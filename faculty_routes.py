@@ -4,7 +4,7 @@ from database import db, User, TimeTable, Attendance, Notification, CorrectionRe
 from auth import token_required
 import csv
 from io import StringIO
-from sqlalchemy import func
+from sqlalchemy import func, case
 from datetime import datetime, timedelta
 import pandas as pd
 from reportlab.lib import colors
@@ -83,7 +83,10 @@ class AttendanceStatistics(Resource):
             stats = db.session.query(
                 TimeTable.period,
                 db.func.count(db.distinct(Attendance.user_id)).label('total_students'),
-                db.func.sum(db.case((Attendance.status == 'present', 1), else_=0))
+                            func.sum(case(
+                                (Attendance.status == 'present', 1),
+                                else_=0
+                            ))
 .label('present_count')
             ).outerjoin(Attendance, (TimeTable.user_id == Attendance.user_id) & (TimeTable.period == Attendance.period)
             ).filter(TimeTable.user_id == current_user
