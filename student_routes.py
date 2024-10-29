@@ -7,6 +7,7 @@ from flask_mail import Mail, Message
 import matplotlib.pyplot as plt
 import io
 import base64
+from sqlalchemy import case
 
 student_ns = Namespace('student', description='Student operations')
 
@@ -124,7 +125,12 @@ class AttendanceReport(Resource):
             weekly_report = db.session.query(
                 db.func.strftime('%W', Attendance.check_in_time).label('week'),
                 db.func.count().label('total_periods'),
-                db.func.sum(db.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_periods')
+                db.func.sum(
+                    case(
+                        (Attendance.status == 'present', 1),
+                        else_=0
+                    )
+                ).label('attended_periods')
             ).filter(Attendance.user_id == current_user
             ).group_by('week'
             ).order_by(db.desc('week')
@@ -346,12 +352,16 @@ class AttendanceAnalytics(Resource):
             attendance_data = db.session.query(
                 db.func.date(Attendance.check_in_time).label('date'),
                 db.func.count(Attendance.id).label('total_classes'),
-                db.func.sum(db.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+                db.func.sum(
+                    case(
+                        (Attendance.status == 'present', 1),
+                        else_=0
+                    )
+                ).label('attended_classes')
             ).filter(
                 Attendance.user_id == current_user,
                 Attendance.check_in_time.between(start_date, end_date)
             ).group_by(db.func.date(Attendance.check_in_time)).all()
-
             dates = [data.date.strftime('%Y-%m-%d') for data in attendance_data]
             attendance_rates = [data.attended_classes / data.total_classes * 100 if data.total_classes > 0 else 0 for data in attendance_data]
 
@@ -384,8 +394,8 @@ class AttendanceAnalytics(Resource):
             }, 200
 
         except Exception as e:
-            return {'status': 'error', 'message': str(e)}, 500
 
+            return {'status': 'error', 'message': str(e)}, 500
 @student_ns.route('/search')
 class SearchAttendance(Resource):
     @token_required
