@@ -51,6 +51,12 @@ class Register(Resource):
         try:
             data = request.get_json()
             user_id = data.get('id')
+
+            # Check if user_id already exists
+            if User.query.filter_by(user_id=user_id).first():
+                return {'status': 'error', 'message': 'User ID already exists.'}, 400
+
+            # Proceed with the rest of the registration logic
             name = data.get('name')
             role = data.get('role', '').lower()
             email = data.get('email')
@@ -77,7 +83,6 @@ class Register(Resource):
             
             if User.query.filter_by(email=email).first():
                 return {'status': 'error', 'message': 'Email already registered.'}, 400
-
             hashed_password = generate_password_hash(password)
 
             new_user = User(
@@ -100,9 +105,8 @@ class Register(Resource):
 
         except Exception as e:
             db.session.rollback()
-            return {'status': 'error', 'message': str(e)}, 500
-
-@shared_ns.route('/login')
+            current_app.logger.error(f"Error during registration: {str(e)}")
+            return {'status': 'error', 'message': 'An unexpected error occurred.'}, 500@shared_ns.route('/login')
 class Login(Resource):
     @shared_ns.expect(login_model)
     @shared_ns.response(200, 'Login successful.')
