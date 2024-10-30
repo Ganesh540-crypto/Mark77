@@ -498,3 +498,29 @@ class FacultyProfile(Resource):
         except Exception as e:
             db.session.rollback()
             return {'status': 'error', 'message': str(e)}, 500
+
+@faculty_ns.route('/view_timetable')
+class ViewTimetable(Resource):
+    @token_required
+    def get(self, current_user):
+        try:
+            timetable = TimeTable.query.filter_by(user_id=current_user).order_by(
+                db.case(
+                    {'monday': 1, 'tuesday': 2, 'wednesday': 3, 'thursday': 4, 'friday': 5},
+                    value=TimeTable.day
+                ),
+                TimeTable.start_time
+            ).all()
+
+            timetable_data = [{
+                'day': entry.day,
+                'period': entry.period,
+                'start_time': entry.start_time,
+                'end_time': entry.end_time,
+                'block_name': entry.block_name,
+                'wifi_name': entry.wifi_name
+            } for entry in timetable]
+
+            return {'status': 'success', 'data': timetable_data}, 200
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}, 500
