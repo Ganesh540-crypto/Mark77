@@ -21,6 +21,7 @@ def create_app():
     app = Flask(__name__)
     
     app.config.from_object(Config)
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:OItfIOxLAOaFZUKSopLLsWnQwadQQgVx@autorack.proxy.rlwy.net:55802/railway'
     
     # Initialize the database
     init_db(app)

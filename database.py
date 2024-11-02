@@ -84,9 +84,20 @@ class UserActivity(db.Model):
 def backup_database(app):
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"backup_{timestamp}.db"
-        db_path = app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')
-        subprocess.run(["sqlite3", db_path, f".backup {backup_file}"], check=True)
+        backup_file = f"backup_{timestamp}.sql"
+        db_url = app.config['SQLALCHEMY_DATABASE_URI']
+        
+        subprocess.run([
+            "pg_dump",
+            "-h", "autorack.proxy.rlwy.net",
+            "-p", "55802",
+            "-U", "postgres",
+            "-F", "c",
+            "-b",
+            "-v",
+            "-f", backup_file,
+            "railway"
+        ], env={"PGPASSWORD": "OItfIOxLAOaFZUKSopLLsWnQwadQQgVx"}, check=True)
         return backup_file
     except Exception as e:
         app.logger.error(f"Database backup failed: {str(e)}")
@@ -97,13 +108,19 @@ def restore_database(app, backup_file):
         app.logger.error(f"Backup file not found: {backup_file}")
         return False
     try:
-        db_path = app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')
-        subprocess.run(["sqlite3", db_path, f".restore {backup_file}"], check=True)
+        subprocess.run([
+            "pg_restore",
+            "-h", "autorack.proxy.rlwy.net",
+            "-p", "55802",
+            "-U", "postgres",
+            "-d", "railway",
+            "-v",
+            backup_file
+        ], env={"PGPASSWORD": "OItfIOxLAOaFZUKSopLLsWnQwadQQgVx"}, check=True)
         return True
     except Exception as e:
         app.logger.error(f"Database restore failed: {str(e)}")
         return False
-
 @click.command('init-db')
 @with_appcontext
 def init_db_command():
@@ -129,7 +146,14 @@ def restore_db_command(backup_file):
         click.echo("Database restore failed or backup file not found")
 
 def init_db(app):
+    from sqlalchemy import create_engine
+    from sqlalchemy_utils import database_exists, create_database
+
     if not hasattr(app, 'extensions') or 'sqlalchemy' not in app.extensions:
+        engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'])
+        if not database_exists(engine.url):
+            create_database(engine.url)
+            
         db.init_app(app)
         migrate.init_app(app, db)
     
@@ -138,7 +162,6 @@ def init_db(app):
     app.cli.add_command(backup_db_command)
     app.cli.add_command(restore_db_command)
 
-    # Initialize the database if it doesn't exist
     with app.app_context():
         db.create_all()
 
