@@ -20,7 +20,7 @@ class User(db.Model):
     year = db.Column(db.String(20))
     branch = db.Column(db.String(64))
     department = db.Column(db.String(64))
-    password_hash = db.Column(db.String(128))
+    password_hash = db.Column(db.String(256))
     reset_token = db.Column(db.String(128))
     reset_token_expiry = db.Column(db.DateTime)
 
