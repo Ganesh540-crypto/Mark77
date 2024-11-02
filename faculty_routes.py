@@ -189,8 +189,8 @@ class OverallAnalytics(Resource):
             # Distribution of attendance zones
             zone_distribution = db.session.query(
                 func.case(
-                    (func.sum(func.case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 75, 'green'),
-                    (func.sum(func.case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 65, 'yellow'),
+                    (func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 75, 'green'),
+                    (func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 65, 'yellow'),
                     else_='red'
                 ).label('zone'),                func.count(User.user_id).label('count')
             ).join(Attendance, User.user_id == Attendance.user_id
