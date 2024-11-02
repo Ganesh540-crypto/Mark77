@@ -12,17 +12,20 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from configuration import Config
 from werkzeug.exceptions import HTTPException
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 limiter = Limiter(key_func=get_remote_address)
 
 migrate = Migrate()
 
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
 def create_app():
     app = Flask(__name__)
     
     app.config.from_object(Config)
     app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:OItfIOxLAOaFZUKSopLLsWnQwadQQgVx@autorack.proxy.rlwy.net:55802/railway'
-    
+    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SECRET_KEY'] = 'Hari@123456'
     # Initialize the database
     init_db(app)
     
