@@ -16,4 +16,4 @@ zxcvbn==4.4.28
 numpy<2.0.0
 pandas==2.1.4
 reportlab==4.0.0
-sqlalchemy_utils==0.39.1
+SQLAlchemy-Utils==0.41.1
