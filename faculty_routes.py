@@ -164,62 +164,15 @@ class StudentAnalytics(Resource):
 @faculty_ns.route('/overall_analytics')
 class OverallAnalytics(Resource):
     @token_required
-    def get(self, current_user):
+    def get(current_user, self):
         try:
-            # Overall statistics
-            total_students = db.session.query(func.count(User.user_id)).filter(User.role == 'student').scalar()
-            total_classes = db.session.query(func.count(Attendance.id)).scalar()
-            total_present = db.session.query(func.count(Attendance.id)).filter(Attendance.status == 'present').scalar()
-            average_attendance = (total_present / total_classes * 100) if total_classes > 0 else 0
-
-            # Attendance trend over last 30 days
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=30)
-            daily_attendance = db.session.query(
-                func.date(Attendance.check_in_time).label('date'),
-                func.count(Attendance.id).label('total'),
-                func.sum(case((Attendance.status == 'present', 1), else_=0)).label('present')
-            ).filter(Attendance.check_in_time.between(start_date, end_date)
-            ).group_by(func.date(Attendance.check_in_time)).all()
-            attendance_trend = [{
-                'date': day.date.strftime('%Y-%m-%d'),
-                'attendance_rate': (day.present / day.total * 100) if day.total > 0 else 0
-            } for day in daily_attendance]
-
-            # Calculate attendance percentage per student
-            attendance_subquery = db.session.query(
-                Attendance.user_id,
-                (func.sum(case([(Attendance.status == 'present', 1)], else_=0)) * 100.0 / func.count(Attendance.id)).label('attendance_percentage')
-            ).group_by(Attendance.user_id).subquery()
-
-            # Determine zone for each student based on attendance percentage
-            zone_subquery = db.session.query(
-                attendance_subquery.c.user_id,
-                case([
-                    (attendance_subquery.c.attendance_percentage >= 75, 'green'),
-                    (attendance_subquery.c.attendance_percentage >= 65, 'yellow')
-                ], else_='red').label('zone')
-            ).subquery()
-
-            # Count number of students in each zone
-            zone_distribution = db.session.query(
-                zone_subquery.c.zone,
-                func.count(zone_subquery.c.user_id).label('count')
-            ).group_by(zone_subquery.c.zone).all()
-
-            # Prepare response data
-            response = {
-                'status': 'success',
-                'total_students': total_students,
-                'average_attendance': average_attendance,
-                'zone_distribution': {zone: count for zone, count in zone_distribution},
-                'attendance_trend': attendance_trend
-            }
-
-            return jsonify(response)
-
+            total_classes = Attendance.query.count()
+            total_present = Attendance.query.filter_by(status='present').count()
+            attendance_rate = (total_present / total_classes) * 100 if total_classes > 0 else 0
+            data = {'attendance': attendance_rate}
+            return jsonify({'status': 'success', 'data': data})
         except Exception as e:
-            return jsonify({'status': 'error', 'message': str(e)}), 500
+            return jsonify({'status': 'error', 'message': 'Internal Server Error'}), 500
 
 @faculty_ns.route('/update_attendance')
 class UpdateAttendance(Resource):
@@ -501,25 +454,10 @@ class FacultyProfile(Resource):
 @faculty_ns.route('/view_timetable')
 class ViewTimetable(Resource):
     @token_required
-    def get(self, current_user):
+    def get(current_user, self):
         try:
-            timetable = TimeTable.query.filter_by(user_id=current_user).order_by(
-                db.case(
-                    {'monday': 1, 'tuesday': 2, 'wednesday': 3, 'thursday': 4, 'friday': 5},
-                    value=TimeTable.day
-                ),
-                TimeTable.start_time
-            ).all()
-
-            timetable_data = [{
-                'day': entry.day,
-                'period': entry.period,
-                'start_time': entry.start_time,
-                'end_time': entry.end_time,
-                'block_name': entry.block_name,
-                'wifi_name': entry.wifi_name
-            } for entry in timetable]
-
-            return {'status': 'success', 'data': timetable_data}, 200
+            timetable_entries = TimeTable.query.filter_by(user_id=current_user.user_id).all()
+            data = [entry.to_dict() for entry in timetable_entries]
+            return jsonify({'status': 'success', 'data': data})
         except Exception as e:
-            return {'status': 'error', 'message': str(e)}, 500
+            return jsonify({'status': 'error', 'message': 'Internal Server Error'}), 500

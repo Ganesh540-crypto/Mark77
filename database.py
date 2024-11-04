@@ -51,6 +51,18 @@ class TimeTable(db.Model):
     block_name = db.Column(db.String(64))
     wifi_name = db.Column(db.String(64))
 
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'day': self.day,
+            'period': self.period,
+            'start_time': self.start_time,
+            'end_time': self.end_time,
+            'block_name': self.block_name,
+            'wifi_name': self.wifi_name,
+        }
+
 class Notification(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     faculty_id = db.Column(db.String(64), db.ForeignKey('user.user_id'), nullable=False)
