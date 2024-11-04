@@ -1,4 +1,5 @@
 from flask_migrate import Migrate
+import os
 from create_app import create_app
 from database import db
 from shared_routes import shared_ns
@@ -16,4 +17,4 @@ api.add_namespace(faculty_ns)
 migrate = Migrate(app, db)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

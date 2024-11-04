@@ -116,6 +116,9 @@ class AttendanceReport(Resource):
     def get(self, current_user):
         """Generates an attendance report for the student."""
         try:
+            from sqlalchemy.sql.expression import extract, case, desc
+            from sqlalchemy.sql import func
+
             total_periods = Attendance.query.filter_by(user_id=current_user).count()
             attended_periods = Attendance.query.filter_by(user_id=current_user, status='present').count()
             attendance_percentage = (attended_periods / total_periods) * 100 if total_periods > 0 else 0
@@ -123,18 +126,12 @@ class AttendanceReport(Resource):
             attendance_status = 'green' if attendance_percentage >= 75 else 'yellow' if attendance_percentage >= 65 else 'red'
 
             weekly_report = db.session.query(
-                db.func.strftime('%W', Attendance.check_in_time).label('week'),
-                db.func.count().label('total_periods'),
-                db.func.sum(
-                    case(
-                        (Attendance.status == 'present', 1),
-                        else_=0
-                    )
-                ).label('attended_periods')
-            ).filter(Attendance.user_id == current_user
-            ).group_by('week'
-            ).order_by(db.desc('week')
-            ).limit(4).all()
+                extract('week', Attendance.check_in_time).label('week'),
+                func.count().label('total_periods'),
+                func.sum(case([(Attendance.status == 'present', 1)], else_=0)).label('attended_periods')
+                ).filter(
+                    Attendance.user_id == current_user
+                ).group_by('week').order_by(desc('week')).limit(4).all()
 
             return {
                 'status': 'success',
@@ -146,8 +143,8 @@ class AttendanceReport(Resource):
             }, 200
 
         except Exception as e:
-            return {'status': 'error', 'message': str(e)}, 500
 
+            return {'status': 'error', 'message': str(e)}, 500
 @student_ns.route('/view_timetable')
 class ViewTimetable(Resource):
     @token_required
