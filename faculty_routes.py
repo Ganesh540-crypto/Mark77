@@ -186,32 +186,40 @@ class OverallAnalytics(Resource):
                 'attendance_rate': (day.present / day.total * 100) if day.total > 0 else 0
             } for day in daily_attendance]
 
-            # Distribution of attendance zones
+            # Calculate attendance percentage per student
+            attendance_subquery = db.session.query(
+                Attendance.user_id,
+                (func.sum(case([(Attendance.status == 'present', 1)], else_=0)) * 100.0 / func.count(Attendance.id)).label('attendance_percentage')
+            ).group_by(Attendance.user_id).subquery()
+
+            # Determine zone for each student based on attendance percentage
+            zone_subquery = db.session.query(
+                attendance_subquery.c.user_id,
+                case([
+                    (attendance_subquery.c.attendance_percentage >= 75, 'green'),
+                    (attendance_subquery.c.attendance_percentage >= 65, 'yellow')
+                ], else_='red').label('zone')
+            ).subquery()
+
+            # Count number of students in each zone
             zone_distribution = db.session.query(
-                case(
-                    (func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 75, 'green'),
-                    (func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 65, 'yellow'),
-                    else_='red'
-                ).label('zone'),                func.count(User.user_id).label('count')
-            ).join(Attendance, User.user_id == Attendance.user_id
-            ).filter(User.role == 'student'
-            ).group_by(User.user_id
-            ).group_by('zone').all()
+                zone_subquery.c.zone,
+                func.count(zone_subquery.c.user_id).label('count')
+            ).group_by(zone_subquery.c.zone).all()
 
-            zone_data = {zone.zone: zone.count for zone in zone_distribution}
-
-            return {
+            # Prepare response data
+            response = {
                 'status': 'success',
-                'data': {
-                    'total_students': total_students,
-                    'total_classes': total_classes,
-                    'average_attendance': round(average_attendance, 2),
-                    'attendance_trend': attendance_trend,
-                    'zone_distribution': zone_data
-                }
-            }, 200
+                'total_students': total_students,
+                'average_attendance': average_attendance,
+                'zone_distribution': {zone: count for zone, count in zone_distribution},
+                'attendance_trend': attendance_trend
+            }
+
+            return jsonify(response)
+
         except Exception as e:
-            return {'status': 'error', 'message': str(e)}, 500
+            return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @faculty_ns.route('/update_attendance')
 class UpdateAttendance(Resource):
