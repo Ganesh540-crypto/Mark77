@@ -96,68 +96,39 @@ class AttendanceStatistics(Resource):
 class StudentAnalytics(Resource):
     @token_required
     def get(self, current_user):
-        """Retrieves analytics for students."""
         try:
-            page = request.args.get('page', 1, type=int)
-            per_page = request.args.get('per_page', 10, type=int)
-            sort_by = request.args.get('sort_by', 'attendance_percentage')
-            order = request.args.get('order', 'desc')
-            search = request.args.get('search', '')
-            start_date = request.args.get('start_date')
-            end_date = request.args.get('end_date')
+            # Verify faculty role
+            faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
+            if not faculty:
+                return {'status': 'error', 'message': 'Unauthorized'}, 401
 
-            query = db.session.query(
-                User.user_id,
-                User.name,
-                func.count(Attendance.id).label('total_classes'),
-                func.sum(case((Attendance.status == 'present', 1), else_=0)).label('attended_classes')
-            ).outerjoin(Attendance, User.user_id == Attendance.user_id
-            ).filter(User.role == 'student')
-
-            if search:
-                query = query.filter(User.name.ilike(f'%{search}%'))
-
-            if start_date:
-                query = query.filter(Attendance.check_in_time >= start_date)
-            if end_date:
-                query = query.filter(Attendance.check_in_time <= end_date)
-
-            query = query.group_by(User.user_id, User.name)  # Include User.name in GROUP BY
-
-            if sort_by == 'attendance_percentage':
-                order_column = func.cast(func.sum(case((Attendance.status == 'present', 1), else_=0)), db.Float) / func.cast(func.count(Attendance.id), db.Float)
-            elif sort_by == 'name':
-                order_column = User.name
-            else:
-                order_column = User.user_id
-
-            if order == 'desc':
-                query = query.order_by(order_column.desc())
-            else:
-                query = query.order_by(order_column.asc())
-
-            pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-            students = pagination.items
-
-            analytics = []
+            # Get all students in faculty's department
+            students = User.query.filter_by(role='student', department=faculty.department).all()
+            
+            analytics_data = []
             for student in students:
-                attendance_percentage = (student.attended_classes / student.total_classes * 100) if student.total_classes > 0 else 0
-                zone = 'green' if attendance_percentage >= 75 else 'yellow' if attendance_percentage >= 65 else 'red'
-                analytics.append({
+                # Calculate attendance percentage for each student
+                total_classes = Attendance.query.filter_by(user_id=student.user_id).count()
+                attended_classes = Attendance.query.filter_by(
+                    user_id=student.user_id,
+                    status='present'
+                ).count()
+                
+                attendance_percentage = (attended_classes / total_classes * 100) if total_classes > 0 else 0
+                
+                analytics_data.append({
                     'user_id': student.user_id,
                     'name': student.name,
-                    'attendance_percentage': round(attendance_percentage, 2),
-                    'zone': zone
+                    'total_classes': total_classes,
+                    'attended_classes': attended_classes,
+                    'attendance_percentage': round(attendance_percentage, 2)
                 })
 
             return {
-                'status': 'success', 
-                'data': analytics,
-                'page': page,
-                'per_page': per_page,
-                'total_pages': pagination.pages,
-                'total_students': pagination.total
+                'status': 'success',
+                'data': analytics_data
             }, 200
+
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
 
