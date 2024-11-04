@@ -103,16 +103,20 @@ class StudentAnalytics(Resource):
                 return {'status': 'error', 'message': 'Unauthorized'}, 401
 
             # Get all students in faculty's department
-            students = User.query.filter_by(role='student', department=faculty.department).all()
-            
+            students = User.query.filter_by(
+                role='student', 
+                department=faculty.department
+            ).all()
+
             analytics_data = []
             for student in students:
-                # Calculate attendance percentage for each student
-                total_classes = Attendance.query.filter_by(user_id=student.user_id).count()
-                attended_classes = Attendance.query.filter_by(
-                    user_id=student.user_id,
-                    status='present'
-                ).count()
+                # Calculate attendance stats
+                attendance_records = Attendance.query.filter_by(
+                    user_id=student.user_id
+                ).all()
+                
+                total_classes = len(attendance_records)
+                attended_classes = len([a for a in attendance_records if a.status == 'present'])
                 
                 attendance_percentage = (attended_classes / total_classes * 100) if total_classes > 0 else 0
                 
@@ -126,7 +130,20 @@ class StudentAnalytics(Resource):
 
             return {
                 'status': 'success',
-                'data': analytics_data
+                'data': {
+                    'students': analytics_data,
+                    'attendance_trend': [
+                        # Add sample attendance trend data
+                        {'date': '2024-03-01', 'attendance_rate': 85},
+                        {'date': '2024-03-02', 'attendance_rate': 90},
+                        # Add more dates as needed
+                    ],
+                    'zone_distribution': {
+                        'green': len([s for s in analytics_data if s['attendance_percentage'] >= 75]),
+                        'yellow': len([s for s in analytics_data if 60 <= s['attendance_percentage'] < 75]),
+                        'red': len([s for s in analytics_data if s['attendance_percentage'] < 60])
+                    }
+                }
             }, 200
 
         except Exception as e:
