@@ -46,8 +46,8 @@ class MarkAttendance(Resource):
             period_info = TimeTable.query.filter(
                 TimeTable.user_id == current_user,
                 TimeTable.day == day_of_week,
-                TimeTable.start_time <= now.time(),
-                TimeTable.end_time >= now.time()
+                db.cast(TimeTable.start_time, db.Time) <= now.time(),
+                db.cast(TimeTable.end_time, db.Time) >= now.time()
             ).first()
 
             period = period_info.period if period_info else "free_period"
@@ -80,6 +80,7 @@ class MarkAttendance(Resource):
         except Exception as e:
             db.session.rollback()
             return {'status': 'error', 'message': str(e)}, 500
+
 
 @student_ns.route('/checkout')
 class Checkout(Resource):
@@ -143,7 +144,6 @@ class AttendanceReport(Resource):
             }, 200
 
         except Exception as e:
-
             return {'status': 'error', 'message': str(e)}, 500
 @student_ns.route('/view_timetable')
 class ViewTimetable(Resource):
