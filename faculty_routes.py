@@ -3,7 +3,7 @@ from flask_restx import Namespace, Resource, fields
 from database import db, User, TimeTable, Attendance, Notification, CorrectionRequest
 from auth import token_required
 import csv
-from io import StringIO
+from io import StringIO, BytesIO
 from sqlalchemy import func, case
 from datetime import datetime, timedelta
 import pandas as pd
@@ -164,13 +164,13 @@ class StudentAnalytics(Resource):
 @faculty_ns.route('/overall_analytics')
 class OverallAnalytics(Resource):
     @token_required
-    def get(current_user, self):
+    def get(self, current_user):
         try:
             total_classes = Attendance.query.count()
             total_present = Attendance.query.filter_by(status='present').count()
             attendance_rate = (total_present / total_classes) * 100 if total_classes > 0 else 0
             data = {'attendance': attendance_rate}
-            return jsonify({'status': 'success', 'data': data})
+            return {'status': 'success', 'data': data}, 200
         except Exception as e:
             return jsonify({'status': 'error', 'message': 'Internal Server Error'}), 500
 
@@ -454,10 +454,10 @@ class FacultyProfile(Resource):
 @faculty_ns.route('/view_timetable')
 class ViewTimetable(Resource):
     @token_required
-    def get(current_user, self):
+    def get(self, current_user):
         try:
             timetable_entries = TimeTable.query.filter_by(user_id=current_user.user_id).all()
             data = [entry.to_dict() for entry in timetable_entries]
-            return jsonify({'status': 'success', 'data': data})
+            return {'status': 'success', 'data': data}, 200
         except Exception as e:
             return jsonify({'status': 'error', 'message': 'Internal Server Error'}), 500

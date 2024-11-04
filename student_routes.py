@@ -46,8 +46,8 @@ class MarkAttendance(Resource):
             period_info = TimeTable.query.filter(
                 TimeTable.user_id == current_user,
                 TimeTable.day == day_of_week,
-                db.cast(TimeTable.start_time, db.Time) <= now.time(),
-                db.cast(TimeTable.end_time, db.Time) >= now.time()
+                TimeTable.start_time <= now.time(),
+                TimeTable.end_time >= now.time()
             ).first()
 
             period = period_info.period if period_info else "free_period"
@@ -59,7 +59,7 @@ class MarkAttendance(Resource):
                 block_name=block_name,
                 period=period,
                 wifi_name=wifi_name,
-                status='present' if not is_late else 'late'
+                status='present' if not is_llate else 'late'
             )
             db.session.add(new_attendance)
 
@@ -81,7 +81,6 @@ class MarkAttendance(Resource):
             db.session.rollback()
             return {'status': 'error', 'message': str(e)}, 500
 
-
 @student_ns.route('/checkout')
 class Checkout(Resource):
     @student_ns.expect(checkout_model)  # Expecting the checkout model
@@ -95,7 +94,7 @@ class Checkout(Resource):
             ).order_by(Attendance.check_in_time.desc()).first()
 
             if not attendance_record:
-                return {'status': 'error', 'message': 'No active check-in found.'}, 400
+                return {'status': 'error', 'message': 'No active attendance record found.'}, 404
 
             check_out_time = datetime.now()
             duration = (check_out_time - attendance_record.check_in_time).total_seconds() // 60
@@ -120,27 +119,19 @@ class AttendanceReport(Resource):
             from sqlalchemy.sql.expression import extract, case, desc
             from sqlalchemy.sql import func
 
-            total_periods = Attendance.query.filter_by(user_id=current_user).count()
-            attended_periods = Attendance.query.filter_by(user_id=current_user, status='present').count()
-            attendance_percentage = (attended_periods / total_periods) * 100 if total_periods > 0 else 0
-
-            attendance_status = 'green' if attendance_percentage >= 75 else 'yellow' if attendance_percentage >= 65 else 'red'
-
             weekly_report = db.session.query(
                 extract('week', Attendance.check_in_time).label('week'),
                 func.count().label('total_periods'),
                 func.sum(case([(Attendance.status == 'present', 1)], else_=0)).label('attended_periods')
-                ).filter(
-                    Attendance.user_id == current_user
-                ).group_by('week').order_by(desc('week')).limit(4).all()
+            ).filter(
+                Attendance.user_id == current_user
+            ).group_by('week').order_by(desc('week')).limit(4).all()
 
             return {
                 'status': 'success',
-                'attendance_percentage': attendance_percentage,
-                'attendance_status': attendance_status,
-                'total_periods': total_periods,
-                'attended_periods': attended_periods,
-                'weekly_report': [{'week': w.week, 'total_periods': w.total_periods, 'attended_periods': w.attended_periods} for w in weekly_report]
+                'data': {
+                    'weekly_report': [{'week': w.week, 'total_periods': w.total_periods, 'attended_periods': w.attended_periods} for w in weekly_report]
+                }
             }, 200
 
         except Exception as e:
@@ -160,7 +151,7 @@ class ViewTimetable(Resource):
             ).all()
 
             if not timetable:
-                return {'status': 'error', 'message': 'No timetable found for this user.'}, 404
+                return {'status': 'error', 'message': 'Timetable not found.'}, 404
 
             formatted_timetable = [{
                 'day': t.day,
@@ -228,7 +219,7 @@ class NotifyUpcomingClasses(Resource):
                 
                 return {"status": "success", "message": "Notification sent"}, 200
             else:
-                return {"status": "info", "message": "No classes tomorrow"}, 200
+                return {'status': 'error', 'message': 'No classes found for tomorrow.'}, 404
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
 
@@ -331,7 +322,7 @@ class StudentProfile(Resource):
             student.branch = data.get('branch', student.branch)
 
             db.session.commit()
-            return {'status': 'success', 'message': 'Profile updated successfully'}, 200
+            return {'status': 'success', 'message': 'Profile updated successfully.'}, 200
         except Exception as e:
             db.session.rollback()
             return {'status': 'error', 'message': str(e)}, 500

@@ -1,10 +1,10 @@
+import os
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import click
 from flask.cli import with_appcontext
-import os
 import subprocess
 from flask import current_app
 
@@ -94,45 +94,41 @@ class UserActivity(db.Model):
         return f'<UserActivity {self.id}: {self.user_id} - {self.activity_type}>'
 
 def backup_database(app):
+    # Replace hardcoded credentials with environment variables
+    db_url = app.config['SQLALCHEMY_DATABASE_URI']
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = f"backup_{timestamp}.sql"
     try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"backup_{timestamp}.sql"
-        db_url = app.config['SQLALCHEMY_DATABASE_URI']
-        
         subprocess.run([
             "pg_dump",
-            "-h", "autorack.proxy.rlwy.net",
-            "-p", "55802",
-            "-U", "postgres",
+            db_url,
             "-F", "c",
             "-b",
             "-v",
             "-f", backup_file,
-            "railway"
-        ], env={"PGPASSWORD": "OItfIOxLAOaFZUKSopLLsWnQwadQQgVx"}, check=True)
+        ], check=True)
         return backup_file
     except Exception as e:
         app.logger.error(f"Database backup failed: {str(e)}")
         return None
 
 def restore_database(app, backup_file):
+    db_url = app.config['SQLALCHEMY_DATABASE_URI']
     if not os.path.exists(backup_file):
         app.logger.error(f"Backup file not found: {backup_file}")
         return False
     try:
         subprocess.run([
             "pg_restore",
-            "-h", "autorack.proxy.rlwy.net",
-            "-p", "55802",
-            "-U", "postgres",
-            "-d", "railway",
+            db_url,
             "-v",
             backup_file
-        ], env={"PGPASSWORD": "OItfIOxLAOaFZUKSopLLsWnQwadQQgVx"}, check=True)
+        ], check=True)
         return True
     except Exception as e:
         app.logger.error(f"Database restore failed: {str(e)}")
         return False
+
 @click.command('init-db')
 @with_appcontext
 def init_db_command():
@@ -166,8 +162,8 @@ def init_db(app):
         if not database_exists(engine.url):
             create_database(engine.url)
             
-        db.init_app(app)
-        migrate.init_app(app, db)
+    db.init_app(app)
+    migrate.init_app(app, db)
     
     # Register CLI commands
     app.cli.add_command(init_db_command)
