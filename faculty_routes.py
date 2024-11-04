@@ -83,7 +83,7 @@ class AttendanceStatistics(Resource):
             stats = db.session.query(
                 TimeTable.period,
                 db.func.count(db.distinct(Attendance.user_id)).label('total_students'),
-    func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)).label('present_count')
+    func.sum(case((Attendance.status == 'present', 1), else_=0)).label('present_count')
             ).outerjoin(Attendance, (TimeTable.user_id == Attendance.user_id) & (TimeTable.period == Attendance.period)
             ).filter(TimeTable.user_id == current_user
             ).group_by(TimeTable.period).all()
@@ -110,7 +110,7 @@ class StudentAnalytics(Resource):
                 User.user_id,
                 User.name,
                 func.count(Attendance.id).label('total_classes'),
-                func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+                func.sum(case((Attendance.status == 'present', 1), else_=0)).label('attended_classes')
             ).outerjoin(Attendance, User.user_id == Attendance.user_id
             ).filter(User.role == 'student')
 
@@ -125,7 +125,7 @@ class StudentAnalytics(Resource):
             query = query.group_by(User.user_id, User.name)  # Include User.name in GROUP BY
 
             if sort_by == 'attendance_percentage':
-                order_column = func.cast(func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)), db.Float) / func.cast(func.count(Attendance.id), db.Float)
+                order_column = func.cast(func.sum(case((Attendance.status == 'present', 1), else_=0)), db.Float) / func.cast(func.count(Attendance.id), db.Float)
             elif sort_by == 'name':
                 order_column = User.name
             else:
@@ -178,7 +178,7 @@ class OverallAnalytics(Resource):
             daily_attendance = db.session.query(
                 func.date(Attendance.check_in_time).label('date'),
                 func.count(Attendance.id).label('total'),
-                func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)).label('present')
+                func.sum(case((Attendance.status == 'present', 1), else_=0)).label('present')
             ).filter(Attendance.check_in_time.between(start_date, end_date)
             ).group_by(func.date(Attendance.check_in_time)).all()
             attendance_trend = [{
@@ -188,9 +188,9 @@ class OverallAnalytics(Resource):
 
             # Distribution of attendance zones
             zone_distribution = db.session.query(
-                func.case(
-                    (func.sum(func.case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 75, 'green'),
-                    (func.sum(func.case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 65, 'yellow'),
+                case(
+                    (func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 75, 'green'),
+                    (func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / func.count(Attendance.id) >= 65, 'yellow'),
                     else_='red'
                 ).label('zone'),                func.count(User.user_id).label('count')
             ).join(Attendance, User.user_id == Attendance.user_id
@@ -276,13 +276,11 @@ class StudentsByAttendance(Resource):
                 User.user_id,
                 User.name,
                 db.func.count(Attendance.id).label('total_classes'),
-                func.sum(func.case([(Attendance.status == 'present', 1)], else_=0))
-.label('attended_classes')
+                func.sum(case((Attendance.status == 'present', 1), else_=0)).label('attended_classes')
             ).join(Attendance, User.user_id == Attendance.user_id
             ).filter(User.role == 'student'
             ).group_by(User.user_id
-            ).having(db.func.sum(db.case((Attendance.status == 'present', 1), else_=0))
- * 100 / db.func.count(Attendance.id) <= percentage
+            ).having(func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / db.func.count(Attendance.id) <= percentage
             ).all()
 
             result = [{
@@ -306,11 +304,11 @@ class DetainedStudents(Resource):
                 User.user_id,
                 User.name,
                 db.func.count(Attendance.id).label('total_classes'),
-                db.func.sum(db.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+                func.sum(case((Attendance.status == 'present', 1), else_=0)).label('attended_classes')
             ).join(Attendance, User.user_id == Attendance.user_id
             ).filter(User.role == 'student'
             ).group_by(User.user_id, User.name  # Include User.name in GROUP BY
-            ).having(db.func.sum(db.case([(Attendance.status == 'present', 1)], else_=0)) * 100 / db.func.count(Attendance.id) < 75
+            ).having(func.sum(case((Attendance.status == 'present', 1), else_=0)) * 100 / db.func.count(Attendance.id) < 75
             ).all()
 
             print(f"Query result: {detained_students}")  # Debug print
@@ -342,7 +340,7 @@ class ExportAttendance(Resource):
                 User.user_id,
                 User.name,
                 func.count(Attendance.id).label('total_classes'),
-                func.sum(func.case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+                func.sum(case((Attendance.status == 'present', 1), else_=0)).label('attended_classes')
             ).join(Attendance, User.user_id == Attendance.user_id
             ).filter(User.role == 'student')
 
