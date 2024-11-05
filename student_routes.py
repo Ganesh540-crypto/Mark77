@@ -59,7 +59,7 @@ class MarkAttendance(Resource):
                 block_name=block_name,
                 period=period,
                 wifi_name=wifi_name,
-                status='present' if not is_llate else 'late'
+                status='present' if not is_late else 'late'
             )
             db.session.add(new_attendance)
 

@@ -64,7 +64,8 @@ class EnterTimetable(Resource):
                 start_time=start_time,
                 end_time=end_time,
                 block_name=block_name,
-                wifi_name=wifi_name
+                wifi_name=wifi_name,
+                faculty_id=current_user  # Add this line
             )
             db.session.add(new_timetable)
             db.session.commit()
@@ -100,54 +101,47 @@ class StudentAnalytics(Resource):
             # Verify faculty role
             faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
             if not faculty:
-                return {'status': 'error', 'message': 'Unauthorized'}, 401
+                return {'message': 'Unauthorized access'}, 401
 
-            # Get all students in faculty's department
-            students = User.query.filter_by(
-                role='student', 
-                department=faculty.department
+            # Query to get student analytics
+            analytics = db.session.query(
+                User.user_id,
+                User.name,
+                func.count(Attendance.id).label('total_classes'),
+                func.sum(case([(Attendance.status == 'present', 1)], else_=0)).label('attended_classes')
+            ).outerjoin(
+                Attendance, Attendance.user_id == User.user_id
+            ).filter(
+                User.role == 'student'
+            ).group_by(
+                User.user_id, User.name
+            ).order_by(
+                (func.sum(case([(Attendance.status == 'present', 1)], else_=0)) / func.nullif(func.count(Attendance.id), 0)).desc()
             ).all()
 
             analytics_data = []
-            for student in students:
-                # Calculate attendance stats
-                attendance_records = Attendance.query.filter_by(
-                    user_id=student.user_id
-                ).all()
-                
-                total_classes = len(attendance_records)
-                attended_classes = len([a for a in attendance_records if a.status == 'present'])
-                
-                attendance_percentage = (attended_classes / total_classes * 100) if total_classes > 0 else 0
-                
+            for student in analytics:
+                total_classes = student.total_classes or 0
+                attended_classes = student.attended_classes or 0
+
+                if total_classes == 0:
+                    attendance_percentage = 0
+                else:
+                    attendance_percentage = (attended_classes / total_classes) * 100
+
                 analytics_data.append({
                     'user_id': student.user_id,
                     'name': student.name,
                     'total_classes': total_classes,
                     'attended_classes': attended_classes,
-                    'attendance_percentage': round(attendance_percentage, 2)
+                    'attendance_percentage': attendance_percentage
                 })
 
-            return {
-                'status': 'success',
-                'data': {
-                    'students': analytics_data,
-                    'attendance_trend': [
-                        # Add sample attendance trend data
-                        {'date': '2024-03-01', 'attendance_rate': 85},
-                        {'date': '2024-03-02', 'attendance_rate': 90},
-                        # Add more dates as needed
-                    ],
-                    'zone_distribution': {
-                        'green': len([s for s in analytics_data if s['attendance_percentage'] >= 75]),
-                        'yellow': len([s for s in analytics_data if 60 <= s['attendance_percentage'] < 75]),
-                        'red': len([s for s in analytics_data if s['attendance_percentage'] < 60])
-                    }
-                }
-            }, 200
+            return {'data': analytics_data}, 200
 
         except Exception as e:
-            return {'status': 'error', 'message': str(e)}, 500
+            db.session.rollback()
+            return {'message': str(e)}, 500
 
 @faculty_ns.route('/overall_analytics')
 class OverallAnalytics(Resource):
@@ -449,3 +443,22 @@ class ViewTimetable(Resource):
             return {'status': 'success', 'data': data}, 200
         except Exception as e:
             return jsonify({'status': 'error', 'message': 'Internal Server Error'}), 500
+@faculty_ns.route('/entered_timetables')
+
+class FacultyEnteredTimetables(Resource):
+    @token_required
+    def get(self, current_user):
+        """Retrieves timetables entered by the faculty for students."""
+        try:
+            # Verify faculty role
+            faculty = User.query.filter_by(user_id=current_user, role='faculty').first()
+            if not faculty:
+                return {'status': 'error', 'message': 'Unauthorized access.'}, 403
+
+            # Fetch timetables where faculty_id matches current_user
+            timetables = TimeTable.query.filter_by(faculty_id=current_user).all()
+            data = [entry.to_dict() for entry in timetables]
+
+            return {'status': 'success', 'data': data}, 200
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}, 500
