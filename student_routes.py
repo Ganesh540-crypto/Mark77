@@ -1,5 +1,5 @@
 from flask_restx import Namespace, Resource, fields
-from flask import request, current_app
+from flask import request, current_app, make_response
 from datetime import datetime, timedelta
 from database import db, Attendance, TimeTable, User, Notification, CorrectionRequest
 from auth import token_required
@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import io
 import base64
 from sqlalchemy import case
+import csv
+from openpyxl import Workbook
 
 student_ns = Namespace('student', description='Student operations')
 
@@ -426,6 +428,71 @@ class SearchAttendance(Resource):
                 'status': 'success',
                 'data': attendance_data
             }, 200
+
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}, 500
+
+@student_ns.route('/export_attendance')
+class ExportAttendance(Resource):
+    @token_required
+    def get(self, current_user):
+        """Exports attendance data in CSV or Excel format."""
+        try:
+            format_type = request.args.get('format', 'csv')
+            start_date = request.args.get('startDate')
+            end_date = request.args.get('endDate')
+
+            query = Attendance.query.filter(Attendance.user_id == current_user)
+            
+            if start_date:
+                query = query.filter(Attendance.check_in_time >= start_date)
+            if end_date:
+                query = query.filter(Attendance.check_in_time <= end_date)
+
+            attendance_records = query.all()
+
+            if format_type == 'csv':
+                output = io.StringIO()
+                writer = csv.writer(output)
+                writer.writerow(['Date', 'Check In', 'Check Out', 'Period', 'Status'])
+                
+                for record in attendance_records:
+                    writer.writerow([
+                        record.check_in_time.date(),
+                        record.check_in_time.time(),
+                        record.check_out_time.time() if record.check_out_time else '',
+                        record.period,
+                        record.status
+                    ])
+                
+                response = make_response(output.getvalue())
+                response.headers['Content-Type'] = 'text/csv'
+                response.headers['Content-Disposition'] = 'attachment; filename=attendance.csv'
+            else:
+                # Excel export implementation
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.append(['Date', 'Check In', 'Check Out', 'Period', 'Status'])
+                
+                for record in attendance_records:
+                    sheet.append([
+                        record.check_in_time.date(),
+                        record.check_in_time.time(),
+                        record.check_out_time.time() if record.check_out_time else '',
+                        record.period,
+                        record.status
+                    ])
+                
+                excel_file = io.BytesIO()
+                workbook.save(excel_file)
+                excel_file.seek(0)
+                
+                response = make_response(excel_file.getvalue())
+                response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                response.headers['Content-Disposition'] = 'attachment; filename=attendance.xlsx'
+
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            return response
 
         except Exception as e:
             return {'status': 'error', 'message': str(e)}, 500
